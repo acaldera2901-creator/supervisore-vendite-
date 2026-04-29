@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { analyzeSalesCall, generateGuidelines, CallAnalysisResult } from './lib/gemini';
-import { BookOpen, FileText, MessageCircle, Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Columns, Loader2, Sparkles, Wand2, Terminal } from 'lucide-react';
+import { BookOpen, FileText, MessageCircle, Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Columns, Loader2, Sparkles, Wand2 } from 'lucide-react';
 import { motion } from 'motion/react';
 
 const DEFAULT_FORMAZIONE = `La nostra azienda vende un software gestionale B2B. 
@@ -38,109 +38,6 @@ Cliente: "Non sono convinto, ci penserò."
 Venditore: "Va bene, magari le mando una mail. Arrivederci."
 Cliente: "Arrivederci."`;
 
-const GEMINI_PYTHON_CODE = `import google.generativeai as genai
-import json
-
-genai.configure(api_key='TUA_API_KEY')
-
-SYSTEM_INSTRUCTION = """Sei un supervisore esperto di tecniche di vendita. Il tuo unico compito è analizzare le trascrizioni di chiamate tra un venditore e un cliente, basandoti ESCLUSIVAMENTE sui documenti di riferimento che ti sono stati forniti: il manuale di vendita aziendale e lo script ideale di vendita.
-
-Per ogni trascrizione che riceverai, produrrai un'analisi strutturata in formato JSON valido, senza markdown, senza testo aggiuntivo, senza commenti. Il JSON dovrà avere rigorosamente la seguente struttura:
-{
-  "voto": 0, "errori": [], "punti_di_forza": [], "punti_deboli": [], "momento_perdita": "", "suggerimento": ""
-}
-Dove:
-- "voto": intero 1-10
-- "errori": lista di stringhe
-- "punti_di_forza": lista di stringhe
-- "punti_deboli": lista di stringhe
-- "momento_perdita": battuta precisa in cui si perde il controllo
-- "suggerimento": consiglio concreto
-"""
-
-model = genai.GenerativeModel(
-    model_name="gemini-2.5-pro",
-    system_instruction=SYSTEM_INSTRUCTION
-)
-
-def analizza_trascrizione(transcript: str, manuale: str, script: str) -> dict:
-    prompt = f"""Manuale aziendale:
-{manuale}
-
-Script ideale di vendita:
-{script}
-
-Trascrizione della chiamata:
-{transcript}
-
-Analizza la conversazione e restituisci SOLO il JSON."""
-
-    response = model.generate_content(
-        prompt,
-        generation_config=genai.types.GenerationConfig(
-            response_mime_type="application/json",
-            temperature=0.1
-        )
-    )
-    return json.loads(response.text)`
-
-const OPENAI_PYTHON_CODE = `import json
-from openai import OpenAI
-
-# Puoi usare il client OpenAI per connetterti a OpenAI, Groq, Together 
-# oppure a un server Ollama remoto che richiede una API Key impostando base_url
-client = OpenAI(
-    api_key='992f1b41e49a49b6b17963e6622dbae4.f6ioMo7dREpBs0uXl8XHiTiD',
-    # base_url='https://tuo-server-ollama.com/v1' # Decommenta per usare un tuo server Ollama compatibile OpenAI
-)
-
-SYSTEM_INSTRUCTION = """... usa la stessa definita sopra ..."""
-
-def analizza_con_openai(transcript: str, manuale: str, script: str) -> dict:
-    prompt = f"""Manuale aziendale:\\n{manuale}\\n\\nScript ideale:\\n{script}\\n\\nTrascrizione:\\n{transcript}\\n\\nRESTITUISCI SOLO IL JSON."""
-
-    response = client.chat.completions.create(
-        model='gpt-4o-mini', # oppure 'llama3' se stai usando il tuo endpoint Ollama
-        messages=[
-            {'role': 'system', 'content': SYSTEM_INSTRUCTION},
-            {'role': 'user', 'content': prompt}
-        ],
-        response_format={"type": "json_object"},
-        temperature=0.1
-    )
-    raw = response.choices[0].message.content
-    return json.loads(raw)`
-
-const OLLAMA_PYTHON_CODE = `import json
-from ollama import Client
-
-# Se invece usi la libreria nativa di Ollama e il server richiede una API Key (Bearer token):
-client = Client(
-    host='https://tuo-server-ollama.com',
-    headers={'Authorization': 'Bearer 992f1b41e49a49b6b17963e6622dbae4.f6ioMo7dREpBs0uXl8XHiTiD'}
-)
-
-SYSTEM_INSTRUCTION = """... usa la stessa definita sopra ..."""
-
-def analizza_con_ollama(transcript: str, manuale: str, script: str) -> dict:
-    prompt = f"""Manuale aziendale:\\n{manuale}\\n\\nScript ideale:\\n{script}\\n\\nTrascrizione:\\n{transcript}\\n\\nRESTITUISCI SOLO IL JSON."""
-
-    response = client.chat(
-        model='llama3',
-        messages=[
-            {'role': 'system', 'content': SYSTEM_INSTRUCTION},
-            {'role': 'user', 'content': prompt}
-        ],
-        format='json',
-        options={'temperature': 0.1}
-    )
-    raw = response['message']['content']
-    
-    # Pulizia opzionale
-    if raw.startswith('\`\`\`'):
-        raw = raw.split('\\n', 1)[1].rsplit('\`\`\`', 1)[0]
-    return json.loads(raw)`
-
 export default function App() {
   const [formazione, setFormazione] = useState(DEFAULT_FORMAZIONE);
   const [manual, setManual] = useState(DEFAULT_MANUAL);
@@ -151,7 +48,7 @@ export default function App() {
   const [generatingDocs, setGeneratingDocs] = useState(false);
   const [result, setResult] = useState<CallAnalysisResult | null>(null);
   const [error, setError] = useState('');
-  const [viewMode, setViewMode] = useState<'formatted'|'raw'|'code'>('formatted');
+  const [viewMode, setViewMode] = useState<'formatted'|'raw'>('formatted');
   const [inputTab, setInputTab] = useState<'knowledge'|'transcript'>('knowledge');
 
   const handleGenerateDocs = async () => {
@@ -335,16 +232,10 @@ export default function App() {
               >
                 JSON Grezzo
               </button>
-              <button 
-                onClick={() => setViewMode('code')}
-                className={`text-[10px] uppercase font-bold tracking-widest pb-2 border-b-2 transition-colors ${viewMode === 'code' ? 'text-zinc-100 border-blue-500' : 'text-zinc-600 border-transparent hover:text-zinc-400'}`}
-              >
-                Integrazione API
-              </button>
             </div>
 
-            <div className={`flex-1 rounded-xl overflow-y-auto ${viewMode === 'raw' || viewMode === 'code' ? 'bg-[#121212] border border-zinc-800 p-6' : ''}`}>
-              {!result && !loading && viewMode !== 'code' && (
+            <div className={`flex-1 rounded-xl overflow-y-auto ${viewMode === 'raw' ? 'bg-[#121212] border border-zinc-800 p-6' : ''}`}>
+              {!result && !loading && (
                 <div className="h-full min-h-[20rem] flex flex-col items-center justify-center text-zinc-600 space-y-4">
                   <div className="p-4 bg-zinc-800/30 rounded-full border border-zinc-800">
                     <Target size={32} className="text-zinc-500" />
@@ -370,27 +261,6 @@ export default function App() {
                 >
                   {JSON.stringify(result, null, 2)}
                 </motion.pre>
-              )}
-
-              {viewMode === 'code' && (
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-8">
-                  <div>
-                    <h4 className="text-[10px] uppercase font-bold text-blue-400 tracking-widest flex items-center gap-2 mb-3">
-                      <Terminal size={14} /> Python Backend (Gemini API)
-                    </h4>
-                    <pre className="text-zinc-300 text-[10px] sm:text-[11px] font-mono bg-[#0a0a0a] p-4 rounded-lg border border-zinc-800/80 overflow-x-auto leading-relaxed">
-                      {GEMINI_PYTHON_CODE}
-                    </pre>
-                  </div>
-                  <div className="pt-4 border-t border-zinc-800/50">
-                    <h4 className="text-[10px] uppercase font-bold text-emerald-400 tracking-widest flex items-center gap-2 mb-3">
-                      <Terminal size={14} /> Python Backend (LLM Locali tramite Ollama)
-                    </h4>
-                    <pre className="text-zinc-300 text-[10px] sm:text-[11px] font-mono bg-[#0a0a0a] p-4 rounded-lg border border-zinc-800/80 overflow-x-auto leading-relaxed">
-                      {OLLAMA_PYTHON_CODE}
-                    </pre>
-                  </div>
-                </motion.div>
               )}
 
               {result && !loading && viewMode === 'formatted' && (

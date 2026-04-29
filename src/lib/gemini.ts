@@ -1,7 +1,6 @@
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenAI, Type } from '@google/genai';
 
-const apiKey = import.meta.env.VITE_GEMINI_API_KEY || process.env.GEMINI_API_KEY;
-const ai = new GoogleGenAI({ apiKey });
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export interface CallAnalysisResult {
   voto: number;
@@ -14,29 +13,28 @@ export interface CallAnalysisResult {
 
 export async function generateGuidelines(formazione: string): Promise<{manuale: string, script: string}> {
   const systemInstruction = `Sei un Sales Director esperto. Il tuo compito è analizzare il materiale di formazione fornito e generare un Manuale di Vendita conciso e uno Script Ideale.`;
-  
-  const prompt = `Materiale di formazione:\n${formazione}\n\nEstrai e formatta le informazioni restituendo ESATTAMENTE un JSON con la seguente struttura:\n{\n  "manuale": "Testo del manuale con le regole principali a punti (es. 1. Apertura, 2. Scoperta, ecc.)",\n  "script": "Script ideale con un dialogo di esempio tra Venditore e Cliente"\n}\nSii preciso e professionale. Non includere markdown fuori dal JSON.`;
+  const prompt = `Materiale di formazione:\n${formazione}\n\nEstrai e formatta le informazioni restituendo ESATTAMENTE un JSON con la seguente struttura:\n{\n  "manuale": "...",\n  "script": "..."\n}\nSii preciso e professionale. Non includere markdown fuori dal JSON.`;
 
   const response = await ai.models.generateContent({
-    model: 'gemini-2.5-pro',
+    model: 'gemini-2.5-flash',
     contents: prompt,
     config: {
       systemInstruction,
-      temperature: 0.2,
-      responseMimeType: "application/json",
+      responseMimeType: 'application/json',
       responseSchema: {
-        type: "object",
+        type: Type.OBJECT,
         properties: {
-          manuale: { type: "string" },
-          script: { type: "string" }
+          manuale: { type: Type.STRING },
+          script: { type: Type.STRING }
         },
-        required: ["manuale", "script"]
-      }
+        required: ['manuale', 'script']
+      },
+      temperature: 0.1
     }
   });
 
-  if (!response.text) throw new Error("Nessuna risposta dal modello.");
-  return JSON.parse(response.text) as {manuale: string, script: string};
+  const content = response.text || "{}";
+  return JSON.parse(content) as {manuale: string, script: string};
 }
 
 export async function analyzeSalesCall(
@@ -59,44 +57,38 @@ Per ogni trascrizione che riceverai, produrrai un'analisi strutturata in formato
 
 Dove:
 - "voto": numero intero tra 1 e 10 che valuta l'efficacia complessiva della chiamata.
-- "errori": lista di stringhe. Ogni errore deve indicare:
-   * Cosa ha sbagliato il venditore.
-   * Un riferimento concreto alla trascrizione.
-   * Se l'errore viola una regola, citarla.
-- "punti_di_forza": lista di stringhe che descrivono gli aspetti positivi della chiamata, con esempi specifici tratti dalla conversazione, su cui il venditore dovrebbe capitalizzare.
-- "punti_deboli": lista di stringhe che descrivono le aree di debolezza più rilevanti della conversazione, anche qui con riferimenti concreti.
-- "momento_perdita": battuta in cui il venditore perde.
+- "errori": lista di stringhe. Ogni errore deve indicare cosa ha sbagliato il venditore, con riferimento alla trascrizione e regole.
+- "punti_di_forza": lista di stringhe con aspetti positivi della chiamata.
+- "punti_deboli": lista di stringhe con aree di debolezza.
+- "momento_perdita": battuta in cui il venditore perde. Stringa vuota se non applicabile.
 - "suggerimento": un consiglio concreto.
 
-Linee guida fondamentali:
-- Confronta ogni singola fase della chiamata con il manuale e lo script.
-- Sii pignolo.
-- La risposta deve essere SOLO il JSON descritto. Nient'altro.`;
+La risposta deve essere SOLO il JSON. Nient'altro.`;
 
-  const prompt = `Manuale aziendale:\n${manualText}\n\nScript ideale di vendita:\n${scriptText}\n\nTrascrizione della chiamata:\n${transcriptText}\n\nAnalizza la conversazione e restituisci SOLO il JSON richiesto dalle istruzioni di sistema.`;
+  const prompt = `Manuale aziendale:\n${manualText}\n\nScript ideale di vendita:\n${scriptText}\n\nTrascrizione della chiamata:\n${transcriptText}\n\nRestituisci SOLO IL JSON.`;
 
   const response = await ai.models.generateContent({
     model: 'gemini-2.5-pro',
     contents: prompt,
     config: {
       systemInstruction,
-      temperature: 0.1,
-      responseMimeType: "application/json",
+      responseMimeType: 'application/json',
       responseSchema: {
-        type: "object",
+        type: Type.OBJECT,
         properties: {
-          voto: { type: "integer" },
-          errori: { type: "array", items: { type: "string" } },
-          punti_di_forza: { type: "array", items: { type: "string" } },
-          punti_deboli: { type: "array", items: { type: "string" } },
-          momento_perdita: { type: "string" },
-          suggerimento: { type: "string" }
+          voto: { type: Type.INTEGER },
+          errori: { type: Type.ARRAY, items: { type: Type.STRING } },
+          punti_di_forza: { type: Type.ARRAY, items: { type: Type.STRING } },
+          punti_deboli: { type: Type.ARRAY, items: { type: Type.STRING } },
+          momento_perdita: { type: Type.STRING },
+          suggerimento: { type: Type.STRING }
         },
-        required: ["voto", "errori", "punti_di_forza", "punti_deboli", "momento_perdita", "suggerimento"]
-      }
+        required: ['voto', 'errori', 'punti_di_forza', 'punti_deboli', 'momento_perdita', 'suggerimento']
+      },
+      temperature: 0.1
     }
   });
 
-  if (!response.text) throw new Error("Nessuna risposta dal modello.");
-  return JSON.parse(response.text) as CallAnalysisResult;
+  const content = response.text || "{}";
+  return JSON.parse(content) as CallAnalysisResult;
 }
