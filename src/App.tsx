@@ -1,7 +1,18 @@
 import { useState } from 'react';
-import { analyzeSalesCall, generateGuidelines, CallAnalysisResult } from './lib/gemini';
-import { BookOpen, FileText, MessageCircle, Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Columns, Loader2, Sparkles, Wand2 } from 'lucide-react';
+import { analyzeSalesCall, generateGuidelines, CallAnalysisResult, FormazioneFile } from './lib/gemini';
+import { BookOpen, FileText, MessageCircle, Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Columns, Loader2, Sparkles, Wand2, UploadCloud, X, LayoutDashboard, Users } from 'lucide-react';
 import { motion } from 'motion/react';
+
+export interface CRMRecord {
+  id: string;
+  date: string;
+  nome_cliente: string;
+  stato_deal: 'Nuovo' | 'In Negoziazione' | 'Chiuso Vinto' | 'Chiuso Perso' | 'Da Ricontattare' | string;
+  probabilita_chiusura: number;
+  sommario_chiamata: string;
+  prossimi_passi: string;
+  pain_points: string[];
+}
 
 const DEFAULT_FORMAZIONE = `La nostra azienda vende un software gestionale B2B. 
 Il nostro approccio di vendita si basa sull'essere consulenziali. 
@@ -40,6 +51,7 @@ Cliente: "Arrivederci."`;
 
 export default function App() {
   const [formazione, setFormazione] = useState(DEFAULT_FORMAZIONE);
+  const [files, setFiles] = useState<FormazioneFile[]>([]);
   const [manual, setManual] = useState(DEFAULT_MANUAL);
   const [script, setScript] = useState(DEFAULT_SCRIPT);
   const [transcript, setTranscript] = useState(DEFAULT_TRANSCRIPT);
@@ -50,6 +62,8 @@ export default function App() {
   const [error, setError] = useState('');
   const [viewMode, setViewMode] = useState<'formatted'|'raw'>('formatted');
   const [inputTab, setInputTab] = useState<'knowledge'|'transcript'>('knowledge');
+  const [mainTab, setMainTab] = useState<'analyzer' | 'crm'>('analyzer');
+  const [crmRecords, setCrmRecords] = useState<CRMRecord[]>([]);
 
   const handleGenerateDocs = async () => {
     if (!formazione.trim()) {
@@ -59,7 +73,7 @@ export default function App() {
     setGeneratingDocs(true);
     setError('');
     try {
-      const data = await generateGuidelines(formazione);
+      const data = await generateGuidelines(formazione, files);
       setManual(data.manuale);
       setScript(data.script);
       setError('Documenti generati con successo!');
@@ -71,6 +85,36 @@ export default function App() {
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(e.target.files || []);
+    if (!selectedFiles.length) return;
+
+    let processedCount = 0;
+    const newFormazioneFiles: FormazioneFile[] = [];
+
+    selectedFiles.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const result = event.target?.result as string;
+        const base64 = result.split(',')[1];
+        newFormazioneFiles.push({
+          name: file.name,
+          mimeType: file.type,
+          base64: base64
+        });
+        processedCount++;
+        if (processedCount === selectedFiles.length) {
+          setFiles(prev => [...prev, ...newFormazioneFiles]);
+        }
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const removeFile = (indexToRemove: number) => {
+    setFiles(prev => prev.filter((_, idx) => idx !== indexToRemove));
+  };
+
   const handleAnalyze = async () => {
     setLoading(true);
     setError('');
@@ -78,6 +122,20 @@ export default function App() {
       const data = await analyzeSalesCall(manual, script, transcript);
       setResult(data);
       setViewMode('formatted');
+      
+      if (data.crm_data) {
+        const newRecord: CRMRecord = {
+          id: Date.now().toString() + Math.random().toString(36).substring(7),
+          date: new Date().toLocaleDateString(),
+          nome_cliente: data.crm_data.nome_cliente,
+          stato_deal: data.crm_data.stato_deal,
+          probabilita_chiusura: data.crm_data.probabilita_chiusura,
+          sommario_chiamata: data.crm_data.sommario_chiamata,
+          prossimi_passi: data.crm_data.prossimi_passi,
+          pain_points: data.pain_points_cliente || []
+        };
+        setCrmRecords(prev => [newRecord, ...prev]);
+      }
     } catch (err: any) {
       setError(err.message || "Si è verificato un errore durante l'analisi.");
     } finally {
@@ -123,8 +181,25 @@ export default function App() {
           </div>
         )}
 
+        {/* Main Tabs Segment */}
+        <div className="flex gap-4 border-b border-zinc-800 pb-2">
+          <button
+            onClick={() => setMainTab('analyzer')}
+            className={`text-[11px] uppercase font-bold tracking-widest pb-3 border-b-2 transition-colors flex items-center gap-2 ${mainTab === 'analyzer' ? 'text-amber-500 border-amber-500' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}
+          >
+            <CodeXml size={16} /> Analyzer
+          </button>
+          <button
+            onClick={() => setMainTab('crm')}
+            className={`text-[11px] uppercase font-bold tracking-widest pb-3 border-b-2 transition-colors flex items-center gap-2 ${mainTab === 'crm' ? 'text-emerald-500 border-emerald-500' : 'text-zinc-500 border-transparent hover:text-zinc-300'}`}
+          >
+            <Users size={16} /> CRM Pipeline
+          </button>
+        </div>
+
         {/* Main Content Layout */}
-        <main className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-1 min-h-0">
+        {mainTab === 'analyzer' && (
+          <main className="grid grid-cols-1 lg:grid-cols-12 gap-8 flex-1 min-h-0">
           
           {/* Left Column: Context Inputs */}
           <section className="col-span-1 lg:col-span-5 flex flex-col min-h-0">
@@ -167,15 +242,43 @@ export default function App() {
                     <Wand2 size={14} /> Materiale Formazione (AI Gen)
                   </h3>
                   <p className="text-[10px] text-zinc-500 mb-4 leading-relaxed max-w-[90%]">
-                    Inserisci gli appunti o le procedure descrittive. L'AI genererà automaticamente un Manuale a punti e lo Script Ideale strutturati per l'analisi.
+                    Inserisci gli appunti o allega PDF/Immagini. L'AI capirà tutto e genererà un Manuale a punti e lo Script Ideale strutturati per l'analisi.
                   </p>
                   <textarea 
                     value={formazione}
                     onChange={(e) => setFormazione(e.target.value)}
                     className="w-full h-32 bg-zinc-900/50 border border-zinc-800 rounded-lg p-3 text-zinc-300 text-[11px] leading-relaxed focus:outline-none focus:border-blue-500/50 resize-none font-sans placeholder-zinc-700 relative z-10"
-                    placeholder="Descrivi come il venditore dovrebbe comportarsi..."
+                    placeholder="Descrivi la procedura, oppure allega documenti..."
                   />
-                  <div className="mt-3 flex justify-end relative z-10">
+
+                  {/* File Upload Section */}
+                  <div className="mt-3 relative z-10 border border-dashed border-zinc-800 rounded-lg p-3 bg-zinc-950/50 hover:bg-zinc-900 transition-colors cursor-pointer" onClick={() => document.getElementById('file-upload')?.click()}>
+                    <input type="file" id="file-upload" className="hidden" multiple accept="application/pdf,image/*" onChange={handleFileUpload} />
+                    <div className="flex items-center gap-3 text-zinc-400">
+                      <div className="p-2 bg-blue-500/10 rounded-md text-blue-400">
+                        <UploadCloud size={16} />
+                      </div>
+                      <div className="flex-1">
+                        <span className="text-[11px] font-medium block">Allega file (PDF o Immagini)</span>
+                        <span className="text-[10px] text-zinc-600 block">Clicca per selezionare i documenti dal tuo dispositivo</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {files.length > 0 && (
+                    <div className="mt-3 relative z-10 flex flex-wrap gap-2">
+                      {files.map((file, idx) => (
+                        <div key={idx} className="flex items-center gap-2 bg-blue-900/20 border border-blue-500/30 text-blue-300 px-2 py-1 rounded text-[10px] max-w-[200px]">
+                          <span className="truncate">{file.name}</span>
+                          <button onClick={(e) => { e.stopPropagation(); removeFile(idx); }} className="hover:text-red-400 transition-colors">
+                            <X size={12} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-4 flex justify-end relative z-10">
                     <button
                       onClick={handleGenerateDocs}
                       disabled={generatingDocs}
@@ -335,6 +438,46 @@ export default function App() {
                     )
                   )}
 
+                  {/* Objections & Pain Points section */}
+                  {(result.obiezioni_sollevate?.length > 0 || result.pain_points_cliente?.length > 0) && (
+                    <div className={`grid grid-cols-1 gap-4 ${(result.obiezioni_sollevate?.length > 0 && result.pain_points_cliente?.length > 0) ? 'md:grid-cols-2' : ''}`}>
+                      {result.pain_points_cliente?.length > 0 && (
+                        <div className="bg-[#161616] p-5 rounded-xl border border-zinc-800/50 flex flex-col">
+                          <h4 className="text-[10px] uppercase font-bold text-indigo-400 mb-3 tracking-widest">Pain Points Cliente</h4>
+                          <ul className="text-[11px] space-y-3">
+                            {result.pain_points_cliente.map((pain, i) => (
+                              <li key={i} className="flex gap-2 text-zinc-300">
+                                <span className="text-indigo-500 shrink-0 mt-0.5">•</span>
+                                <span className="leading-relaxed">{pain}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {result.obiezioni_sollevate?.length > 0 && (
+                        <div className="bg-[#161616] p-5 rounded-xl border border-zinc-800/50 flex flex-col">
+                          <h4 className="text-[10px] uppercase font-bold text-violet-400 mb-3 tracking-widest">Analisi Obiezioni</h4>
+                          <div className="space-y-4">
+                            {result.obiezioni_sollevate.map((ob, i) => (
+                              <div key={i} className="text-[11px] border border-zinc-800 rounded p-3 bg-zinc-900/30">
+                                <div className="text-zinc-200 font-medium mb-1 flex items-start justify-between gap-2">
+                                  <span>"{ob.obiezione}"</span>
+                                  {ob.gestita_bene ? (
+                                    <span className="text-[9px] bg-emerald-900/40 text-emerald-400 px-1.5 py-0.5 rounded tracking-widest shrink-0 uppercase border border-emerald-900">Gestita</span>
+                                  ) : (
+                                    <span className="text-[9px] bg-red-900/40 text-red-400 px-1.5 py-0.5 rounded tracking-widest shrink-0 uppercase border border-red-900">Fallita</span>
+                                  )}
+                                </div>
+                                <p className="text-zinc-400 leading-relaxed mt-2">{ob.analisi}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {/* Bottom: Key Insight & Suggestion */}
                   <div className="bg-[#161616] p-6 rounded-xl border border-amber-500/20 flex flex-col justify-center relative overflow-hidden">
                     <div className="absolute top-0 right-0 p-3 opacity-5">
@@ -352,6 +495,89 @@ export default function App() {
 
           </section>
         </main>
+        )}
+
+        {/* CRM View */}
+        {mainTab === 'crm' && (
+          <main className="flex-1 min-h-[30rem] overflow-y-auto pt-4">
+            {crmRecords.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-full text-zinc-500 py-20 border border-dashed border-zinc-800 rounded-xl bg-[#121212]">
+                <Users size={48} className="mb-4 opacity-20" />
+                <p className="text-sm font-medium">Nessun lead nel CRM.</p>
+                <p className="text-xs mt-2 text-center max-w-sm">
+                  Analizza una chiamata per popolare automaticamente la pipeline con i dati estratti dal cliente.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+                {crmRecords.map((record) => (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    key={record.id} 
+                    className="bg-[#121212] border border-zinc-800 rounded-xl p-5 hover:border-zinc-700 transition-colors flex flex-col min-h-[22rem]"
+                  >
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="text-lg font-medium text-white mb-1">{record.nome_cliente}</h3>
+                        <span className="text-[10px] text-zinc-500 uppercase tracking-widest">{record.date}</span>
+                      </div>
+                      <div className={`px-2 py-1 rounded text-[9px] uppercase tracking-widest font-bold border ${
+                        record.stato_deal.includes('Vinto') ? 'bg-emerald-900/40 text-emerald-400 border-emerald-900' :
+                        record.stato_deal.includes('Perso') ? 'bg-red-900/40 text-red-400 border-red-900' :
+                        record.stato_deal.includes('Negoziazione') ? 'bg-amber-900/40 text-amber-400 border-amber-900' :
+                        'bg-blue-900/40 text-blue-400 border-blue-900'
+                      }`}>
+                        {record.stato_deal}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-4 flex-1">
+                      <div>
+                        <p className="text-[10px] uppercase text-zinc-500 tracking-widest mb-1 flex items-center justify-between">
+                          Probabilità 
+                          <span className={`${record.probabilita_chiusura > 60 ? 'text-emerald-500' : record.probabilita_chiusura < 30 ? 'text-red-500' : 'text-amber-500'}`}>{record.probabilita_chiusura}%</span>
+                        </p>
+                        <div className="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden">
+                          <div 
+                            className={`h-full ${record.probabilita_chiusura > 60 ? 'bg-emerald-500' : record.probabilita_chiusura < 30 ? 'bg-red-500' : 'bg-amber-500'}`}
+                            style={{ width: `${record.probabilita_chiusura}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-zinc-400 leading-relaxed bg-zinc-900/50 p-3 rounded-lg border border-zinc-800 flex-1">
+                        <strong className="text-zinc-300 block mb-1 font-semibold">Sommario</strong>
+                        {record.sommario_chiamata}
+                      </div>
+
+                      {record.pain_points?.length > 0 && (
+                        <div>
+                          <strong className="text-[10px] uppercase text-zinc-500 tracking-widest block mb-2">Pain Points</strong>
+                          <div className="flex flex-wrap gap-2">
+                            {record.pain_points.map((pain, i) => (
+                              <span key={i} className="text-[10px] bg-[#1a1a1a] border border-zinc-800 text-zinc-300 px-2 py-1 rounded truncate max-w-full">
+                                {pain}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="border-t border-zinc-800 pt-3 mt-auto">
+                        <strong className="text-[10px] uppercase text-zinc-500 tracking-widest block mb-2">Prossimi Passi</strong>
+                        <p className="text-[11px] text-indigo-300 bg-indigo-900/10 p-3 flex border border-indigo-900/30 rounded-lg">
+                          <Target size={14} className="shrink-0 mt-0.5 mr-2 text-indigo-500" />
+                          <span className="leading-snug">{record.prossimi_passi}</span>
+                        </p>
+                      </div>
+                    </div>
+                  </motion.div>
+                ))}
+              </div>
+            )}
+          </main>
+        )}
         
         {/* Footer Info */}
         <footer className="mt-8 flex justify-between items-center text-[10px] text-zinc-600 uppercase tracking-tighter border-t border-zinc-800 pt-6">
