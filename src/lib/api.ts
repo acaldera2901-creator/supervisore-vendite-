@@ -1,8 +1,9 @@
 import { normalizeAnalysisResult, normalizeCrmRecord } from './normalize';
 import type { CallAnalysisResult, CRMRecord, FormazioneFile, KnowledgeBase } from './types';
 
-const API_BASE =
-  import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:3001' : '');
+const API_BASE = import.meta.env.DEV
+  ? (import.meta.env.VITE_API_URL || 'http://localhost:3001')
+  : '';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
