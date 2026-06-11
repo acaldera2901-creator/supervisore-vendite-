@@ -25,7 +25,17 @@ ollama pull llama3.1
 ollama serve
 ```
 
-5. Avvia backend + frontend:
+5. Installa whisper.cpp + ffmpeg per la trascrizione locale (richiesti dalla route `/api/transcribe`):
+
+```bash
+brew install whisper-cpp ffmpeg
+# scarica il modello (usato di default da WHISPER_MODEL)
+mkdir -p ~/.whisper-models
+curl -L -o ~/.whisper-models/ggml-medium.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin
+```
+
+6. Avvia backend + frontend:
 
 ```bash
 npm run dev:full
@@ -63,9 +73,17 @@ Implementato:
 - CRM e knowledge base su Supabase.
 - Fallback memoria locale.
 - Frontend scollegato da Gemini/API key browser.
+- Trascrizione locale con whisper.cpp + ffmpeg sulla route `/api/transcribe`.
+- Registrazione "in diretta": la chiamata viene registrata in segmenti da 15s e
+  trascritta progressivamente nel tab Trascrizione.
 
-Da completare nel prossimo step:
-- Trascrizione audio reale con Whisper/ffmpeg sulla route `/api/transcribe`.
+Variabili trascrizione (opzionali, hanno default sensati su macOS Homebrew):
+- `WHISPER_CLI`: default `/opt/homebrew/bin/whisper-cli`.
+- `WHISPER_MODEL`: default `~/.whisper-models/ggml-medium.bin`.
+- `FFMPEG_BIN`: default `/opt/homebrew/bin/ffmpeg`.
+
+Nota: la registrazione cattura il microfono. Per registrare entrambe le voci di una
+telefonata serve il vivavoce (o un dispositivo audio di loopback).
 
 ## Collegare Vercel a Ollama locale
 
