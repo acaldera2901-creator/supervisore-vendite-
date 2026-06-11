@@ -26,7 +26,9 @@ function createSupabase(): SupabaseClient {
 const supabase = createSupabase();
 
 // Tempo massimo di attesa che il watcher locale completi il job.
-const POLL_TIMEOUT_MS = 60_000;
+// Deve stare SOTTO il maxDuration della funzione Vercel (60s in vercel.json),
+// altrimenti Vercel uccide la funzione con un 504 grezzo prima del timeout pulito.
+const POLL_TIMEOUT_MS = 55_000;
 const POLL_INTERVAL_MS = 1_000;
 
 function sleep(ms: number): Promise<void> {
