@@ -61,10 +61,12 @@ export function useRecording(onAppend: (text: string) => void) {
   async function start() {
     setError('');
     try {
-      // getDisplayMedia cattura l'audio di sistema (entrambi i lati della call)
+      // getDisplayMedia: audio:true richiede video:true su Chrome, quindi
+      // richiediamo entrambi e fermiamo subito le tracce video (non ci servono).
       const stream = await (navigator.mediaDevices as MediaDevices & {
         getDisplayMedia(opts: object): Promise<MediaStream>;
-      }).getDisplayMedia({ audio: true, video: false });
+      }).getDisplayMedia({ audio: true, video: true });
+      stream.getVideoTracks().forEach((t) => t.stop());
       streamRef.current = stream;
       activeRef.current = true;
       setRecording(true);

@@ -1,13 +1,8 @@
 import cors from 'cors';
-import { execFile } from 'node:child_process';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { promisify } from 'node:util';
 import express from 'express';
-import multer from 'multer';
+import fs from 'node:fs';
 import { normalizeAnalysisResult, toCrmRecord } from './lib/normalize.ts';
-import { generateJson } from './lib/ollama.ts';
+import { enqueueAndWait } from './lib/jobQueue.ts';
 import {
   analysisSystemInstruction,
   buildAnalysisPrompt,
@@ -17,15 +12,9 @@ import {
 import { storage } from './lib/storage.ts';
 import type { KnowledgeBase } from '../src/lib/types';
 
-const execFileAsync = promisify(execFile);
+import multer from 'multer';
+import os from 'node:os';
 const upload = multer({ dest: os.tmpdir() });
-
-// Trascrizione 100% locale con whisper.cpp (stesso stack di Jarvis). Modello "medium"
-// per accuratezza sul parlato italiano veloce; nessun servizio cloud.
-const WHISPER_CLI = process.env.WHISPER_CLI || '/opt/homebrew/bin/whisper-cli';
-const WHISPER_MODEL =
-  process.env.WHISPER_MODEL || path.join(os.homedir(), '.whisper-models', 'ggml-medium.bin');
-const FFMPEG_BIN = process.env.FFMPEG_BIN || '/opt/homebrew/bin/ffmpeg';
 
 const app = express();
 
@@ -89,17 +78,15 @@ app.post(
       return;
     }
 
-    const payload = await generateJson({
+    const filesSuffix = files.length > 0
+      ? `\nFile allegati ricevuti: ${files.map((file: { name?: string }) => file.name || 'file').join(', ')}`
+      : '';
+
+    const data = await enqueueAndWait<Partial<KnowledgeBase>>('guidelines', {
       system: guidelinesSystemInstruction,
-      prompt: buildGuidelinesPrompt(
-        formazione,
-        files.length > 0
-          ? `\nFile allegati ricevuti: ${files.map((file: { name?: string }) => file.name || 'file').join(', ')}`
-          : '',
-      ),
+      prompt: buildGuidelinesPrompt(formazione, filesSuffix),
     });
 
-    const data = payload as Partial<KnowledgeBase>;
     res.json({
       manuale: typeof data.manuale === 'string' ? data.manuale : '',
       script: typeof data.script === 'string' ? data.script : '',
@@ -119,7 +106,7 @@ app.post(
     }
 
     const analysis = normalizeAnalysisResult(
-      await generateJson({
+      await enqueueAndWait('analyze', {
         system: analysisSystemInstruction,
         prompt: buildAnalysisPrompt(manual, script, transcript),
       }),
@@ -148,31 +135,16 @@ app.post(
       return;
     }
 
-    const inputPath = req.file.path;
-    const wavPath = `${inputPath}.wav`;
-    const outPrefix = `${inputPath}-out`;
-    const txtPath = `${outPrefix}.txt`;
-
+    const audioBase64 = fs.readFileSync(req.file.path).toString('base64');
+    const mimeType = req.file.mimetype || 'audio/webm';
     try {
-      // Qualunque container del browser (webm/opus, mp4) -> wav 16kHz mono per whisper.cpp.
-      await execFileAsync(FFMPEG_BIN, ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', wavPath]);
-      // Trascrizione locale in italiano: 8 thread, niente timestamp, niente log di progresso.
-      await execFileAsync(WHISPER_CLI, [
-        '-m', WHISPER_MODEL,
-        '-l', 'it',
-        '-nt', '-np',
-        '-t', '8',
-        '-otxt',
-        '-of', outPrefix,
-        wavPath,
-      ]);
-
-      const transcript = fs.readFileSync(txtPath, 'utf-8').trim();
-      res.json({ transcript });
+      const result = await enqueueAndWait<{ transcript: string }>('transcribe', {
+        audioBase64,
+        mimeType,
+      });
+      res.json({ transcript: result.transcript || '' });
     } finally {
-      fs.unlink(inputPath, () => {});
-      fs.unlink(wavPath, () => {});
-      fs.unlink(txtPath, () => {});
+      fs.unlink(req.file.path, () => {});
     }
   }) as express.RequestHandler,
 );

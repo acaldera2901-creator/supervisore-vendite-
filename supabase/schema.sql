@@ -30,5 +30,19 @@ create table if not exists public.knowledge_base (
   constraint knowledge_base_singleton_key_unique unique (singleton_key)
 );
 
+create table if not exists public.job_queue (
+  id uuid primary key default gen_random_uuid(),
+  type text not null,
+  payload jsonb not null,
+  status text not null default 'pending',
+  result jsonb,
+  error text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists job_queue_status_idx on public.job_queue (status, created_at);
+
 alter table public.crm_records disable row level security;
 alter table public.knowledge_base disable row level security;
+alter table public.job_queue disable row level security;
