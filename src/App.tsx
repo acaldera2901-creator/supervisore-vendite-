@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { analyzeSalesCall, generateGuidelines, getCrmRecords, getHealth, getKnowledgeBase, saveKnowledgeBase, transcribeAudio } from './lib/api';
 import type { CallAnalysisResult, CRMRecord, FormazioneFile } from './lib/types';
-import { Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Loader2, Sparkles, Wand2, UploadCloud, X, Users, Mic } from 'lucide-react';
+import { Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Loader2, Sparkles, Wand2, UploadCloud, X, Users } from 'lucide-react';
+import RecordingPanel, { useRecording } from './components/RecordingPanel';
 import { motion } from 'motion/react';
 
 const DEFAULT_FORMAZIONE = `La nostra azienda vende un software gestionale B2B. 
@@ -56,83 +57,16 @@ export default function App() {
   const [crmRecords, setCrmRecords] = useState<CRMRecord[]>([]);
   const [storageProvider, setStorageProvider] = useState('memory');
 
-  // Registrazione/trascrizione in diretta: la chiamata viene registrata in segmenti
-  // brevi e ogni segmento è trascritto da whisper.cpp (locale) e accodato alla
-  // trascrizione, così il testo cresce durante la telefonata.
-  const [recording, setRecording] = useState(false);
-  const [transcribing, setTranscribing] = useState(false);
-  const streamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const recordingActiveRef = useRef(false);
-  const segmentTimerRef = useRef<number | null>(null);
-  const SEGMENT_MS = 15000;
-
-  function pickMimeType() {
-    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
-    for (const type of candidates) {
-      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) return type;
-    }
-    return '';
-  }
-
-  async function transcribeSegment(blob: Blob) {
-    if (blob.size < 2048) return; // segmento troppo corto (silenzio): salta
-    setTranscribing(true);
-    try {
-      const text = await transcribeAudio(blob);
-      if (text) setTranscript((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Trascrizione del segmento fallita.');
-    } finally {
-      setTranscribing(false);
-    }
-  }
-
-  function startSegment(stream: MediaStream, mimeType: string) {
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-    const chunks: BlobPart[] = [];
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunks.push(e.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
-      // Riparte subito col segmento successivo per ridurre al minimo il buco audio.
-      if (recordingActiveRef.current) startSegment(stream, mimeType);
-      void transcribeSegment(blob);
-    };
-    recorderRef.current = recorder;
-    recorder.start();
-    segmentTimerRef.current = window.setTimeout(() => {
-      if (recorder.state !== 'inactive') recorder.stop();
-    }, SEGMENT_MS);
-  }
-
-  async function startRecording() {
-    setError('');
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      recordingActiveRef.current = true;
-      setRecording(true);
+  const { recording, transcribing, error: recError, start: startRecording, stop: stopRecording } = useRecording(
+    (text) => {
+      setTranscript((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
       setInputTab('transcript');
-      startSegment(stream, pickMimeType());
-    } catch {
-      setError('Impossibile accedere al microfono. Concedi il permesso e riprova.');
     }
-  }
+  );
 
-  function stopRecording() {
-    recordingActiveRef.current = false;
-    setRecording(false);
-    if (segmentTimerRef.current) {
-      clearTimeout(segmentTimerRef.current);
-      segmentTimerRef.current = null;
-    }
-    const recorder = recorderRef.current;
-    if (recorder && recorder.state !== 'inactive') recorder.stop(); // l'ultimo segmento lo trascrive onstop
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
-  }
+  useEffect(() => {
+    if (recError) setError(recError);
+  }, [recError]);
 
   useEffect(() => {
     let active = true;
@@ -324,27 +258,12 @@ export default function App() {
                   <h3 className="text-xs uppercase tracking-widest text-zinc-500 flex items-center gap-2">
                     <span className={`w-2 h-2 rounded-full ${recording ? 'bg-red-500 animate-pulse' : 'bg-blue-500'}`}></span> Trascrizione Chiamata
                   </h3>
-                  <div className="flex items-center gap-3">
-                    {transcribing && (
-                      <span className="text-[10px] text-amber-500 flex items-center gap-1.5 uppercase tracking-widest">
-                        <Loader2 size={12} className="animate-spin" /> Trascrivo...
-                      </span>
-                    )}
-                    <button
-                      onClick={recording ? stopRecording : startRecording}
-                      className={`px-4 py-2 text-[10px] font-bold rounded-full transition-colors uppercase tracking-widest flex items-center gap-2 border ${
-                        recording
-                          ? 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
-                          : 'bg-zinc-800 text-zinc-200 border-zinc-700 hover:bg-zinc-700'
-                      }`}
-                    >
-                      {recording ? (
-                        <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> Ferma registrazione</>
-                      ) : (
-                        <><Mic size={14} /> Registra in diretta</>
-                      )}
-                    </button>
-                  </div>
+                  <RecordingPanel
+                    recording={recording}
+                    transcribing={transcribing}
+                    onStart={startRecording}
+                    onStop={stopRecording}
+                  />
                 </div>
                 <textarea
                   value={transcript}
