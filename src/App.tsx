@@ -1,18 +1,8 @@
-import { useState } from 'react';
-import { analyzeSalesCall, generateGuidelines, CallAnalysisResult, FormazioneFile } from './lib/gemini';
-import { BookOpen, FileText, MessageCircle, Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Columns, Loader2, Sparkles, Wand2, UploadCloud, X, LayoutDashboard, Users } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent } from 'react';
+import { analyzeSalesCall, generateGuidelines, getCrmRecords, getHealth, getKnowledgeBase, saveKnowledgeBase, transcribeAudio } from './lib/api';
+import type { CallAnalysisResult, CRMRecord, FormazioneFile } from './lib/types';
+import { Play, AlertCircle, CheckCircle2, Target, Zap, XCircle, CodeXml, Loader2, Sparkles, Wand2, UploadCloud, X, Users, Mic } from 'lucide-react';
 import { motion } from 'motion/react';
-
-export interface CRMRecord {
-  id: string;
-  date: string;
-  nome_cliente: string;
-  stato_deal: 'Nuovo' | 'In Negoziazione' | 'Chiuso Vinto' | 'Chiuso Perso' | 'Da Ricontattare' | string;
-  probabilita_chiusura: number;
-  sommario_chiamata: string;
-  prossimi_passi: string;
-  pain_points: string[];
-}
 
 const DEFAULT_FORMAZIONE = `La nostra azienda vende un software gestionale B2B. 
 Il nostro approccio di vendita si basa sull'essere consulenziali. 
@@ -64,6 +54,125 @@ export default function App() {
   const [inputTab, setInputTab] = useState<'knowledge'|'transcript'>('knowledge');
   const [mainTab, setMainTab] = useState<'analyzer' | 'crm'>('analyzer');
   const [crmRecords, setCrmRecords] = useState<CRMRecord[]>([]);
+  const [storageProvider, setStorageProvider] = useState('memory');
+
+  // Registrazione/trascrizione in diretta: la chiamata viene registrata in segmenti
+  // brevi e ogni segmento è trascritto da whisper.cpp (locale) e accodato alla
+  // trascrizione, così il testo cresce durante la telefonata.
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const streamRef = useRef<MediaStream | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingActiveRef = useRef(false);
+  const segmentTimerRef = useRef<number | null>(null);
+  const SEGMENT_MS = 15000;
+
+  function pickMimeType() {
+    const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+    for (const type of candidates) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(type)) return type;
+    }
+    return '';
+  }
+
+  async function transcribeSegment(blob: Blob) {
+    if (blob.size < 2048) return; // segmento troppo corto (silenzio): salta
+    setTranscribing(true);
+    try {
+      const text = await transcribeAudio(blob);
+      if (text) setTranscript((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Trascrizione del segmento fallita.');
+    } finally {
+      setTranscribing(false);
+    }
+  }
+
+  function startSegment(stream: MediaStream, mimeType: string) {
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks: BlobPart[] = [];
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+      // Riparte subito col segmento successivo per ridurre al minimo il buco audio.
+      if (recordingActiveRef.current) startSegment(stream, mimeType);
+      void transcribeSegment(blob);
+    };
+    recorderRef.current = recorder;
+    recorder.start();
+    segmentTimerRef.current = window.setTimeout(() => {
+      if (recorder.state !== 'inactive') recorder.stop();
+    }, SEGMENT_MS);
+  }
+
+  async function startRecording() {
+    setError('');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      recordingActiveRef.current = true;
+      setRecording(true);
+      setInputTab('transcript');
+      startSegment(stream, pickMimeType());
+    } catch {
+      setError('Impossibile accedere al microfono. Concedi il permesso e riprova.');
+    }
+  }
+
+  function stopRecording() {
+    recordingActiveRef.current = false;
+    setRecording(false);
+    if (segmentTimerRef.current) {
+      clearTimeout(segmentTimerRef.current);
+      segmentTimerRef.current = null;
+    }
+    const recorder = recorderRef.current;
+    if (recorder && recorder.state !== 'inactive') recorder.stop(); // l'ultimo segmento lo trascrive onstop
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+  }
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadInitialData() {
+      // Carichiamo le risorse in modo indipendente: un fallimento sul CRM o
+      // sulla knowledge base non deve impedire l'uso del resto dell'app.
+      const [healthRes, knowledgeRes, recordsRes] = await Promise.allSettled([
+        getHealth(),
+        getKnowledgeBase(),
+        getCrmRecords(),
+      ]);
+      if (!active) return;
+
+      if (healthRes.status === 'fulfilled') {
+        setStorageProvider(healthRes.value.storage);
+      } else {
+        const message = healthRes.reason instanceof Error ? healthRes.reason.message : 'Backend non raggiungibile.';
+        setError(`Backend non raggiungibile: ${message}`);
+        return;
+      }
+
+      if (recordsRes.status === 'fulfilled') {
+        setCrmRecords(recordsRes.value);
+      }
+
+      if (knowledgeRes.status === 'fulfilled' && knowledgeRes.value) {
+        const knowledge = knowledgeRes.value;
+        setFormazione(knowledge.formazione || DEFAULT_FORMAZIONE);
+        setManual(knowledge.manuale || DEFAULT_MANUAL);
+        setScript(knowledge.script || DEFAULT_SCRIPT);
+      }
+    }
+
+    loadInitialData();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleGenerateDocs = async () => {
     if (!formazione.trim()) {
@@ -76,17 +185,19 @@ export default function App() {
       const data = await generateGuidelines(formazione, files);
       setManual(data.manuale);
       setScript(data.script);
+      await saveKnowledgeBase({ formazione, manuale: data.manuale, script: data.script });
       setError('Documenti generati con successo!');
       setTimeout(() => setError(''), 3000);
-    } catch (err: any) {
-      setError(err.message || "Si è verificato un errore durante la generazione dei documenti.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Si è verificato un errore durante la generazione dei documenti.";
+      setError(message);
     } finally {
       setGeneratingDocs(false);
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
+  const handleFileUpload = (e: ChangeEvent<HTMLInputElement>) => {
+    const selectedFiles = Array.from(e.target.files ?? []) as File[];
     if (!selectedFiles.length) return;
 
     let processedCount = 0;
@@ -95,8 +206,9 @@ export default function App() {
     selectedFiles.forEach(file => {
       const reader = new FileReader();
       reader.onload = (event) => {
-        const result = event.target?.result as string;
+        const result = typeof event.target?.result === 'string' ? event.target.result : '';
         const base64 = result.split(',')[1];
+        if (!base64) return;
         newFormazioneFiles.push({
           name: file.name,
           mimeType: file.type,
@@ -120,24 +232,12 @@ export default function App() {
     setError('');
     try {
       const data = await analyzeSalesCall(manual, script, transcript);
-      setResult(data);
+      setResult(data.analysis);
       setViewMode('formatted');
-      
-      if (data.crm_data) {
-        const newRecord: CRMRecord = {
-          id: Date.now().toString() + Math.random().toString(36).substring(7),
-          date: new Date().toLocaleDateString(),
-          nome_cliente: data.crm_data.nome_cliente,
-          stato_deal: data.crm_data.stato_deal,
-          probabilita_chiusura: data.crm_data.probabilita_chiusura,
-          sommario_chiamata: data.crm_data.sommario_chiamata,
-          prossimi_passi: data.crm_data.prossimi_passi,
-          pain_points: data.pain_points_cliente || []
-        };
-        setCrmRecords(prev => [newRecord, ...prev]);
-      }
-    } catch (err: any) {
-      setError(err.message || "Si è verificato un errore durante l'analisi.");
+      setCrmRecords(prev => [data.record, ...prev.filter(record => record.id !== data.record.id)]);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Si è verificato un errore durante l'analisi.";
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -220,10 +320,33 @@ export default function App() {
 
             {inputTab === 'transcript' && (
               <div className="bg-[#121212] rounded-xl border border-zinc-800 p-6 flex flex-col flex-1 min-h-[30rem]">
-                <h3 className="text-xs uppercase tracking-widest text-zinc-500 mb-4 flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-blue-500"></span> Trascrizione Chiamata
-                </h3>
-                <textarea 
+                <div className="flex items-center justify-between mb-4 gap-3">
+                  <h3 className="text-xs uppercase tracking-widest text-zinc-500 flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${recording ? 'bg-red-500 animate-pulse' : 'bg-blue-500'}`}></span> Trascrizione Chiamata
+                  </h3>
+                  <div className="flex items-center gap-3">
+                    {transcribing && (
+                      <span className="text-[10px] text-amber-500 flex items-center gap-1.5 uppercase tracking-widest">
+                        <Loader2 size={12} className="animate-spin" /> Trascrivo...
+                      </span>
+                    )}
+                    <button
+                      onClick={recording ? stopRecording : startRecording}
+                      className={`px-4 py-2 text-[10px] font-bold rounded-full transition-colors uppercase tracking-widest flex items-center gap-2 border ${
+                        recording
+                          ? 'bg-red-600/20 text-red-400 border-red-500/40 hover:bg-red-600/30'
+                          : 'bg-zinc-800 text-zinc-200 border-zinc-700 hover:bg-zinc-700'
+                      }`}
+                    >
+                      {recording ? (
+                        <><span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> Ferma registrazione</>
+                      ) : (
+                        <><Mic size={14} /> Registra in diretta</>
+                      )}
+                    </button>
+                  </div>
+                </div>
+                <textarea
                   value={transcript}
                   onChange={(e) => setTranscript(e.target.value)}
                   className="flex-1 w-full bg-transparent text-zinc-300 text-xs leading-relaxed focus:outline-none resize-none font-mono placeholder-zinc-700"
@@ -581,7 +704,7 @@ export default function App() {
         
         {/* Footer Info */}
         <footer className="mt-8 flex justify-between items-center text-[10px] text-zinc-600 uppercase tracking-tighter border-t border-zinc-800 pt-6">
-          <p>Sales Supervisor Engine v4.2.0-Alpha</p>
+          <p>Sales Supervisor Engine v4.2.0-Alpha · Storage: {storageProvider}</p>
           <p>© 2024 Corporate Sales Compliance Division</p>
         </footer>
       </div>
